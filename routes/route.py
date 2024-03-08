@@ -1,25 +1,38 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, status
 from models.todos import Todo
-from config.database import collection_name
+from models.user import User
+from config.database import user_collection, collection_name
 from schema.schemas import list_serial
 from bson import ObjectId
-import joblib
-from models.CarUser import CarUser
+import bcrypt
+
 router = APIRouter()
-joblib_in = open("car-recommender.joblib","rb")
-model=joblib.load(joblib_in)
 
-@router.post('/car/predict')
-def predict_car_type(data:CarUser):
-    data = data.dict()
-    age=data['age']
-    gender=data['gender']
 
-    prediction = model.predict([[age, gender]])
-    
-    return {
-        'prediction': prediction[0]
-    }
+# Mock authentication function
+async def authenticate_user(username: str, password: str):
+    user_data = user_collection.find_one({"username": username})
+    if user_data:
+        hashed_password = user_data.get("password", "")
+        if bcrypt.checkpw(password.encode('utf-8'), hashed_password):
+            return True
+    return False
+
+@router.post("/signup", status_code=status.HTTP_201_CREATED)
+async def signup(user: User):
+    hashed_password = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt())
+    user_data = user.dict()
+    user_data['password'] = hashed_password
+    user_collection.insert_one(user_data)
+    return {"message": "User created successfully"}
+
+@router.post("/login")
+async def login(user: User):
+    if await authenticate_user(user.username, user.password):
+        return {"message": "Login successful"}
+    else:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
+
 @router.get("/")
 async def get_todos():
     todos = list_serial(collection_name.find())
