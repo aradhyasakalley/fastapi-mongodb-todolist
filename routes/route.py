@@ -6,9 +6,17 @@ from schema.schemas import list_serial
 from bson import ObjectId
 import bcrypt
 from transformers import pipeline
+from fastapi import File, UploadFile
+import shutil
+import os
 
+
+UPLOAD_DIR = "profile_photos"
+
+# Ensure the upload directory exists
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 router = APIRouter()
-model = pipeline("sentiment-analysis")
+# model = pipeline("sentiment-analysis")
 
 # Authentication function
 async def authenticate_user(username: str, password: str):
@@ -25,9 +33,9 @@ def get_current_user(user: User = Depends(authenticate_user)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
     return user
 
-# sentiment analysis HuggingFace Model
-@router.post("/analyze_sentiment")
-async def analyze_sentiment(text: str):
+# # sentiment analysis HuggingFace Model
+# @router.post("/analyze_sentiment")
+# async def analyze_sentiment(text: str):
     # Run inference
     result = model(text)
     
@@ -72,6 +80,36 @@ async def delete_user(user_id: str, current_user: User = Depends(get_current_use
     else:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+@router.get("/search_users/{username}")
+async def search_users(username: str):
+    users = user_collection.find({"username": {"$regex": username, "$options": "i"}})
+    if users:
+        # Convert ObjectId to string for serialization
+        users = [user | {"_id": str(user["_id"])} for user in users]
+        return users
+    else:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No users found with the provided username")
+    
+
+@router.post("/upload_profile_photo/{user_id}")
+async def upload_profile_photo(user_id: str, file: UploadFile = File(...)):
+    # Generate a unique filename for the uploaded file
+    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    
+    # Save the uploaded file to disk
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Update the user record in the database with the file path of the uploaded photo
+    result = user_collection.update_one({"_id": ObjectId(user_id)}, {"$set": {"profile_photo": file_path}})
+    
+    # Check if the user record was updated successfully
+    if result.modified_count == 1:
+        return {"message": "Profile photo uploaded successfully"}
+    else:
+        # If the user record was not updated, delete the uploaded file
+        os.remove(file_path)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 # Todo endpoints
 @router.get("/")
 async def get_todos():
